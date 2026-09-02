@@ -72217,6 +72217,7 @@ async function run() {
     try {
         const useRelease = core.getInput('use_release');
         const buildExeOnly = core.getBooleanInput('build_exe_only');
+        const onlineOnly = core.getBooleanInput('online_only');
         const buildDir = process.env.RUNNER_TEMP
             ? path.join(process.env.RUNNER_TEMP, 'p')
             : 'p';
@@ -72252,7 +72253,7 @@ async function run() {
 
         if (!fs.existsSync(exeSourcePath)) {
             core.startGroup('Cloning pyappify repository');
-            await exec.exec('git', ['clone', 'https://github.com/ok-oldking/pyappify.git', buildDir]);
+            await exec.exec('git', ['clone', 'https://github.com/fjqz177/pyappify.git', buildDir]);
             if (pyappifyVersion) {
                 core.info(`Checking out specified version: ${pyappifyVersion}`);
                 await exec.exec('git', ['checkout', `tags/${pyappifyVersion}`], { cwd: buildDir });
@@ -72361,6 +72362,7 @@ async function run() {
         core.info(`Created and moved online installer to ${onlineInstallerDest}`);
         core.endGroup();
 
+        if (!onlineOnly) {
         for (const profile of config.profiles) {
             core.info(`Processing profile: ${profile.name}`);
 
@@ -72395,6 +72397,9 @@ async function run() {
                 }
             }
             core.info(`Done packaging profile ${profile.name}`);
+        }
+        } else {
+            core.info('online_only is true. Skipping per-profile offline installer builds.');
         }
 
         await removeIfExists(appDistDir);

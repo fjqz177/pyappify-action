@@ -16,6 +16,11 @@ inputs:
     required: false
     type: boolean
     default: false
+  online_only:
+    description: Only build the online (web-install) installer; skip building per-profile offline -setup.exe packages. Use when the app installs its dependencies on first run (source/dep separation).
+    required: false
+    type: boolean
+    default: false
 
 outputs:
   dist-path:
