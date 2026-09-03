@@ -56,6 +56,13 @@ async function setupRust() {
     core.endGroup();
 }
 
+// Download a file with curl (present on all GitHub runners; avoids ncc
+// resolving the global fetch into a phantom @actions/http-client dependency).
+async function downloadFile(url, destPath) {
+    core.info(`Downloading ${url}`);
+    await exec.exec('curl', ['-fL', '-sS', '--retry', '3', '-o', destPath, url]);
+}
+
 async function provisionUvSidecar(uvVersion, appDistDir) {
     if (!uvVersion) {
         core.info('uv_version not set; skipping uv sidecar provisioning.');
@@ -73,11 +80,7 @@ async function provisionUvSidecar(uvVersion, appDistDir) {
     fs.mkdirSync(tmpDir, { recursive: true });
 
     core.info(`Downloading uv ${cleaned} from ${url}`);
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) {
-        throw new Error(`Failed to download uv: HTTP ${res.status} (${url})`);
-    }
-    fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+    await downloadFile(url, zipPath);
 
     const extractDir = path.join(tmpDir, 'ex');
     fs.mkdirSync(extractDir, { recursive: true });
@@ -99,13 +102,12 @@ async function provisionUvSidecar(uvVersion, appDistDir) {
     // uv is licensed MIT OR Apache-2.0; ship the licenses next to the binary.
     for (const licenseName of ['LICENSE-MIT', 'LICENSE-APACHE']) {
         try {
-            const licenseUrl = `https://raw.githubusercontent.com/astral-sh/uv/${cleaned}/${licenseName}`;
-            const licenseRes = await fetch(licenseUrl);
-            if (licenseRes.ok) {
-                fs.writeFileSync(path.join(appDistDir, licenseName), Buffer.from(await licenseRes.arrayBuffer()));
-            }
+            await downloadFile(
+                `https://raw.githubusercontent.com/astral-sh/uv/${cleaned}/${licenseName}`,
+                path.join(appDistDir, licenseName),
+            );
         } catch {
-            core.warning(`Failed to fetch ${licenseName} for uv ${cleaned}`);
+            core.warning(`Failed to download ${licenseName} for uv ${cleaned}`);
         }
     }
     core.info(`uv ${cleaned} sidecar provisioned next to the launcher executable.`);
