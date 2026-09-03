@@ -56,6 +56,82 @@ async function setupRust() {
     core.endGroup();
 }
 
+async function provisionUvSidecar(uvVersion, appDistDir) {
+    if (!uvVersion) {
+        core.info('uv_version not set; skipping uv sidecar provisioning.');
+        return;
+    }
+    if (process.platform !== 'win32') {
+        core.warning(`uv sidecar provisioning is only supported for win32 (platform=${process.platform}); skipping.`);
+        return;
+    }
+    const cleaned = uvVersion.replace(/^v/, '');
+    const url = `https://github.com/astral-sh/uv/releases/download/${cleaned}/uv-x86_64-pc-windows-msvc.zip`;
+    const tmpDir = path.join(process.env.RUNNER_TEMP || '/tmp', 'uv-download');
+    const zipPath = path.join(tmpDir, 'uv.zip');
+    await removeIfExists(tmpDir);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    core.info(`Downloading uv ${cleaned} from ${url}`);
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) {
+        throw new Error(`Failed to download uv: HTTP ${res.status} (${url})`);
+    }
+    fs.writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+
+    const extractDir = path.join(tmpDir, 'ex');
+    fs.mkdirSync(extractDir, { recursive: true });
+    await exec.exec('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path "${zipPath}" -DestinationPath "${extractDir}" -Force`]);
+    const uvExe = path.join(extractDir, 'uv.exe');
+    if (!fs.existsSync(uvExe)) {
+        throw new Error('uv.exe was not found inside the downloaded archive');
+    }
+    fs.copyFileSync(uvExe, path.join(appDistDir, 'uv.exe'));
+
+    // Verify the sidecar really is the pinned version (stronger than bytes:
+    // proves the binary runs on this platform).
+    const uvPath = path.join(appDistDir, 'uv.exe');
+    const versionOut = await exec.getExecOutput(`"${uvPath}"`, ['--version'], { ignoreReturnCode: true });
+    if (!versionOut.stdout.includes(cleaned)) {
+        throw new Error(`uv.exe version mismatch: expected uv ${cleaned}, got '${versionOut.stdout.trim()}'`);
+    }
+
+    // uv is licensed MIT OR Apache-2.0; ship the licenses next to the binary.
+    for (const licenseName of ['LICENSE-MIT', 'LICENSE-APACHE']) {
+        try {
+            const licenseUrl = `https://raw.githubusercontent.com/astral-sh/uv/${cleaned}/${licenseName}`;
+            const licenseRes = await fetch(licenseUrl);
+            if (licenseRes.ok) {
+                fs.writeFileSync(path.join(appDistDir, licenseName), Buffer.from(await licenseRes.arrayBuffer()));
+            }
+        } catch {
+            core.warning(`Failed to fetch ${licenseName} for uv ${cleaned}`);
+        }
+    }
+    core.info(`uv ${cleaned} sidecar provisioned next to the launcher executable.`);
+}
+
+// Write a shasum-style manifest (`<sha256> *<basename>` per line) covering
+// every published artifact: the launcher exe, the app zip and the online
+// installer. Written at the very end of packaging so each hash is final.
+function writeChecksumManifest(distDir, appDistDir, appBinaryName, appName, platform) {
+    const candidates = [
+        { file: path.join(appDistDir, appBinaryName), name: appBinaryName },
+        { file: path.join(distDir, `${appName}-${platform}.zip`), name: `${appName}-${platform}.zip` },
+        { file: path.join(distDir, `${appName}-${platform}-online-setup.exe`), name: `${appName}-${platform}-online-setup.exe` },
+    ];
+    const lines = [];
+    for (const { file, name } of candidates) {
+        if (fs.existsSync(file)) {
+            const digest = require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+            lines.push(`${digest} *${name}`);
+        }
+    }
+    const manifestPath = path.join(distDir, `${platform}_sha256.txt`);
+    fs.writeFileSync(manifestPath, lines.join('\n') + '\n');
+    core.info(`Wrote SHA256 manifest (${lines.length} entries): ${manifestPath}`);
+}
+
 async function removeIfExists(directoryPath) {
     if (fs.existsSync(directoryPath)) {
         await io.rmRF(directoryPath);
@@ -266,13 +342,9 @@ async function run() {
 
         if (platform !== 'win32') fs.chmodSync(exeDestPath, '755');
 
-        const fileBuffer = fs.readFileSync(exeDestPath);
-        const hashSum = require('crypto').createHash('sha256');
-        hashSum.update(fileBuffer);
-        const hex = hashSum.digest('hex');
-        const hashFilePath = path.join(distDir, `${platform}_sha256.txt`);
-        fs.writeFileSync(hashFilePath, hex);
-        core.info(`Created SHA256 hash file: ${hashFilePath}`);
+        // Pure-uv launchers ship uv.exe as a sidecar (must sit next to the exe
+        // so the runtime can locate it without PATH configuration).
+        await provisionUvSidecar(core.getInput('uv_version'), appDistDir);
 
         const baseZipFileName = `${appName}-${platform}.zip`;
         await createZipArchive(appDistDir, path.join(distDir, baseZipFileName), appName);
@@ -334,6 +406,10 @@ async function run() {
         } else {
             core.info('online_only is true. Skipping per-profile offline installer builds.');
         }
+
+        // Checksum manifest last: every artifact is final at this point
+        // (launcher exe, zip, online installer).
+        writeChecksumManifest(distDir, appDistDir, appBinaryName, appName, platform);
 
         await removeIfExists(appDistDir);
         core.info(`deleting ${appDistDir}`);

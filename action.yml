@@ -21,6 +21,10 @@ inputs:
     required: false
     type: boolean
     default: false
+  uv_version:
+    description: Pin the uv runtime version shipped as a sidecar next to the launcher executable (e.g. 0.8.29). Required for pure-uv launchers; empty skips provisioning.
+    required: false
+    default: ""
 
 outputs:
   dist-path:
