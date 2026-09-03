@@ -61890,14 +61890,6 @@ ZipStream.prototype.finalize = function() {
 
 /***/ }),
 
-/***/ 8463:
-/***/ ((module) => {
-
-module.exports = eval("require")("@actions/http-client");
-
-
-/***/ }),
-
 /***/ 2613:
 /***/ ((module) => {
 
@@ -72082,7 +72074,7 @@ const yaml = __nccwpck_require__(9885);
 const fs = __nccwpck_require__(9896);
 const path = __nccwpck_require__(6928);
 const archiver = __nccwpck_require__(2888);
-const http = __nccwpck_require__(8463);
+const http = __nccwpck_require__(787);
 const { getMainBinaryName, prepareTauriConfig } = __nccwpck_require__(2033);
 
 async function setupPnpm() {
